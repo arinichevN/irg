@@ -19,7 +19,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include "main.h"
-#include "acp/main.h"
+
 #include "acp/app.h"
 
 #define STRINGIFY(x) #x

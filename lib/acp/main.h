@@ -23,6 +23,7 @@ typedef struct {
     socklen_t addr_size;
     int active;
     struct timespec time1;
+    Mutex mutex;
 } Peer;
 
 typedef struct {
@@ -159,6 +160,8 @@ extern int acp_recvOK(Peer *peer, size_t buf_size) ;
 extern char acp_recvPing(Peer *peer, size_t buf_size);
 
 extern int acp_recvFTS(FTSList *list, char qnf, char *cmd, size_t buf_size, size_t list_max_size, int fd) ;
+
+extern int acp_recvI2(I2List *list, char qnf, char *cmd, size_t buf_size, size_t list_max_size, int fd);
 
 extern void freePeer(PeerList *list);
 

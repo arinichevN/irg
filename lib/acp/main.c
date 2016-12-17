@@ -431,13 +431,13 @@ char acp_recvPing(Peer *peer, size_t buf_size) {
     char buf[buf_size];
     if (recvfrom(*(peer->fd), buf, sizeof buf, 0, NULL, NULL) < 0) {
 #ifdef MODE_DEBUG
-        perror("acp_recvOK: recvfrom() error");
+        perror("acp_recvPing: recvfrom() error");
 #endif
         return '\0';
     }
     if (!crc_check(buf, sizeof buf)) {
 #ifdef MODE_DEBUG
-        fputs("acp_recvOK: crc_check() failed\n", stderr);
+        fputs("acp_recvPing: crc_check() failed\n", stderr);
 #endif
         return '\0';
     }

@@ -102,14 +102,14 @@ size_t getTimeIdFromTP(TimePlanList *list) {
     size_t i;
     int found = 0;
     FORL{
-/*
-        int result = todHasCome(list->item[i], curr_tod);
-        if (result == TARGET_BEHIND) {
-            found = 1;
-            break;
-        }
-*/
-        if(curr_tod <= LIi){
+        /*
+                int result = todHasCome(list->item[i], curr_tod);
+                if (result == TARGET_BEHIND) {
+                    found = 1;
+                    break;
+                }
+         */
+        if (curr_tod <= LIi) {
             found = 1;
             break;
         }
@@ -124,37 +124,6 @@ size_t getTimeIdFromTP(TimePlanList *list) {
         }
     }
     return 0;
-}
-
-void pingPeerList(struct timespec interval, struct timespec now, PeerList *list) {
-    size_t i;
-    FORL{
-        if (timeHasPassed(interval, LIi.time1, now)) {
-            char cmd_str[1] = {ACP_CMD_APP_PING};
-            if (!acp_sendStrPack(ACP_QUANTIFIER_BROADCAST, cmd_str, udp_buf_size, &LIi)) {
-#ifdef MODE_DEBUG
-                fputs("ERROR: pingPeerList: acp_sendStrPack failed\n", stderr);
-#endif
-                LIi.active = 0;
-                LIi.time1 = now;
-                break;
-            }
-            //waiting for response...
-            char resp[2] = {'\0', '\0'};
-            resp[0] = acp_recvPing(&LIi, udp_buf_size);
-            if (strncmp(resp, ACP_RESP_APP_BUSY, 1) == 0) {
-#ifdef MODE_DEBUG
-                fputs("ERROR: pingPeerList: acp_recvPing() peer is not busy\n", stderr);
-#endif
-                LIi.active = 0;
-                LIi.time1 = now;
-                break;
-            }
-            LIi.active = 1;
-            LIi.time1 = now;
-        }
-
-    }
 }
 
 int checkSensor(const SensorList *list) {
@@ -416,12 +385,6 @@ Prog * getValveProgByIdFdb(int valve_id, const ValveList *vlist) {
         free(item);
         return NULL;
     }
-    if (!initMutex(&item->mutex_all)) {
-        FREE_LIST(&item->tpl);
-        FREE_LIST(&item->cpl);
-        free(item);
-        return NULL;
-    }
     if (!checkProg(item, &prog_list)) {
         FREE_LIST(&item->tpl);
         FREE_LIST(&item->cpl);
@@ -518,52 +481,15 @@ int unlockProgList() {
     return 1;
 }
 
-/*
-int lockProg(Prog *item) {
-    if (item == NULL) {
-        return 0;
-    }
-    if (pthread_mutex_lock(&(item->mutex.self)) != 0) {
-#ifdef MODE_DEBUG
-        perror("ERROR: lockProg: error locking mutex");
-#endif 
-        return 0;
-    }
-    return 1;
-}
-
-int lockEM(EM *item) {
-    if (item == NULL) {
-        return 0;
-    }
-    if (pthread_mutex_lock(&(item->mutex.self)) != 0) {
-#ifdef MODE_DEBUG
-        perror("ERROR: lockEM: error locking mutex");
-#endif 
-        return 0;
-    }
-    return 1;
-}
-
-int lockSensor(Sensor *item) {
-    if (item == NULL) {
-        return 0;
-    }
-    if (pthread_mutex_lock(&(item->mutex.self)) != 0) {
-#ifdef MODE_DEBUG
-        perror("ERROR: lockSensor: error locking mutex");
-#endif 
-        return 0;
-    }
-    return 1;
-}
- */
-
 FUN_LOCK(Prog)
 
 FUN_LOCK(EM)
 
 FUN_LOCK(Sensor)
+
+FUN_LOCK(Peer)
+
+FUN_TRYLOCK(Peer)
 
 int lockValveMaster(Valve *item) {
     if (item == NULL || item->master == NULL) {
@@ -588,52 +514,13 @@ int tryLockProg(Prog *item) {
     return 1;
 }
 
-/*
-int unlockProg(Prog *item) {
-    if (item == NULL) {
-        return 0;
-    }
-    if (pthread_mutex_unlock(&(item->mutex.self)) != 0) {
-#ifdef MODE_DEBUG
-        perror("ERROR: unlockProg: error unlocking mutex");
-#endif 
-        return 0;
-    }
-    return 1;
-}
-
-int unlockEM(EM *item) {
-    if (item == NULL) {
-        return 0;
-    }
-    if (pthread_mutex_unlock(&(item->mutex.self)) != 0) {
-#ifdef MODE_DEBUG
-        perror("ERROR: unlockEM: error unlocking mutex");
-#endif 
-        return 0;
-    }
-    return 1;
-}
-
-int unlockSensor(Sensor *item) {
-    if (item == NULL) {
-        return 0;
-    }
-    if (pthread_mutex_unlock(&(item->mutex.self)) != 0) {
-#ifdef MODE_DEBUG
-        perror("ERROR: unlockSensor: error unlocking mutex");
-#endif 
-        return 0;
-    }
-    return 1;
-}
- */
-
 FUN_UNLOCK(Prog)
 
 FUN_UNLOCK(EM)
 
 FUN_UNLOCK(Sensor)
+
+FUN_UNLOCK(Peer)
 
 int unlockValveMaster(Valve *item) {
     if (item == NULL || item->master == NULL) {
@@ -648,63 +535,39 @@ int unlockValveMaster(Valve *item) {
     return 1;
 }
 
-int lockProgA(Prog *item) {
-    if (item == NULL) {
-        return 0;
-    }
-    if (pthread_mutex_lock(&(item->mutex_all.self)) != 0) {
+void pingPeerList(struct timespec interval, struct timespec now, PeerList *list) {
+    size_t i;
+    FORL{
+        if (lockPeer(&LIi)) {
+            if (timeHasPassed(interval, LIi.time1, now)) {
+                char cmd_str[1] = {ACP_CMD_APP_PING};
+                if (!acp_sendStrPack(ACP_QUANTIFIER_BROADCAST, cmd_str, udp_buf_size, &LIi)) {
 #ifdef MODE_DEBUG
-        perror("ERROR: lockProgA: error locking mutex");
-#endif 
-        return 0;
-    }
-    return 1;
-}
-
-int tryLockProgA(Prog *item) {
-    if (item == NULL) {
-        return 0;
-    }
-    if (pthread_mutex_trylock(&(item->mutex_all.self)) != 0) {
-        return 0;
-    }
-    return 1;
-}
-
-int unlockProgA(Prog *item) {
-    if (item == NULL) {
-        return 0;
-    }
-    if (pthread_mutex_unlock(&(item->mutex_all.self)) != 0) {
+                    fputs("ERROR: pingPeerList: acp_sendStrPack failed\n", stderr);
+#endif
+                    LIi.active = 0;
+                    LIi.time1 = now;
+                    unlockPeer(&LIi);
+                    break;
+                }
+                //waiting for response...
+                char resp[2] = {'\0', '\0'};
+                resp[0] = acp_recvPing(&LIi, udp_buf_size);
+                if (strncmp(resp, ACP_RESP_APP_BUSY, 1) != 0) {
 #ifdef MODE_DEBUG
-        perror("ERROR: unlockProgA: error unlocking mutex (CMD_GET_ALL)");
-#endif 
-        return 0;
+                    fputs("ERROR: pingPeerList: acp_recvPing() peer is not busy\n", stderr);
+#endif
+                    LIi.active = 0;
+                    LIi.time1 = now;
+                    unlockPeer(&LIi);
+                    break;
+                }
+                LIi.active = 1;
+                LIi.time1 = now;
+            }
+            unlockPeer(&LIi);
+        }
     }
-    return 1;
-}
-
-int lockProgAll() {
-    int f = 0;
-    PROG_LIST_LOOP_ST
-    if (!lockProgA(curr)) {
-        f = 1;
-    }
-    PROG_LIST_LOOP_SP
-    if (f) {
-        PROG_LIST_LOOP_ST
-        unlockProgA(curr);
-        PROG_LIST_LOOP_SP
-        return 0;
-    }
-    return 1;
-}
-
-int unlockProgAll() {
-    PROG_LIST_LOOP_ST
-    unlockProgA(curr);
-    PROG_LIST_LOOP_SP
-    return 1;
 }
 
 char *getValveProgRainState(const Valve *valve, const Prog *prog) {
@@ -713,7 +576,7 @@ char *getValveProgRainState(const Valve *valve, const Prog *prog) {
     }
     if (prog->rain_sensitive) {
         if (valve->sensor_rain != NULL) {
-            if (valve->sensor_rain->value) {
+            if (valve->sensor_rain->value==0) {
                 return "YES";
             } else {
                 return "NO";
@@ -906,61 +769,64 @@ void printAll(ProgList *list, PeerList *pl, EMList *el, SensorList *sl, ValveLis
     uint8_t crc = 0;
     size_t i;
 
-    sendStr("+-------------------------------------------------------------------------------------+\n", &crc);
-    sendStr("|                                         Peer                                        |\n", &crc);
-    sendStr("+--------------------------------+-----------+----------------+-----------+-----------+\n", &crc);
-    sendStr("|               id               |  udp_port |      addr      |     fd    |  active   |\n", &crc);
-    sendStr("+--------------------------------+-----------+----------------+-----------+-----------+\n", &crc);
+    sendStr("+-------------------------------------------------------------------------------------------------+\n", &crc);
+    sendStr("|                                                Peer                                             |\n", &crc);
+    sendStr("+--------------------------------+-----------+----------------+-----------+-----------+-----------+\n", &crc);
+    sendStr("|               id               |  udp_port |      addr      |     fd    |  active   |   link    |\n", &crc);
+    sendStr("+--------------------------------+-----------+----------------+-----------+-----------+-----------+\n", &crc);
     for (i = 0; i < pl->length; i++) {
-        snprintf(q, sizeof q, "|%32s|%11u|%16u|%11d|%11d|\n",
+        snprintf(q, sizeof q, "|%32s|%11u|%16u|%11d|%11d|%11p|\n",
                 pl->item[i].id,
                 pl->item[i].addr.sin_port,
                 pl->item[i].addr.sin_addr.s_addr,
                 *pl->item[i].fd,
-                pl->item[i].active
+                pl->item[i].active,
+                &pl->item[i]
                 );
         sendStr(q, &crc);
     }
-    sendStr("+--------------------------------+-----------+----------------+-----------+-----------+\n", &crc);
+    sendStr("+--------------------------------+-----------+----------------+-----------+-----------+-----------+\n", &crc);
 
-    sendStr("+--------------------------------------------------------------------+\n", &crc);
-    sendStr("|                                     EM                             |\n", &crc);
-    sendStr("+-----------+-----------+--------------------------------+-----------+\n", &crc);
-    sendStr("|     id    | remote_id |             peer_id            |  output   |\n", &crc);
-    sendStr("+-----------+-----------+--------------------------------+-----------+\n", &crc);
+    sendStr("+-----------------------------------------------------------+\n", &crc);
+    sendStr("|                           EM                              |\n", &crc);
+    sendStr("+-----------+-----------+-----------+-----------+-----------+\n", &crc);
+    sendStr("|     id    | remote_id | peer_link |  output   |   link    |\n", &crc);
+    sendStr("+-----------+-----------+-----------+-----------+-----------+\n", &crc);
     for (i = 0; i < el->length; i++) {
-        snprintf(q, sizeof q, "|%11d|%11d|%32s|%11.1f|\n",
+        snprintf(q, sizeof q, "|%11d|%11d|%11p|%11.1f|%11p|\n",
                 el->item[i].id,
                 el->item[i].remote_id,
-                el->item[i].source->id,
-                el->item[i].last_output
+                el->item[i].source,
+                el->item[i].last_output,
+                &el->item[i]
                 );
         sendStr(q, &crc);
     }
-    sendStr("+-----------+-----------+--------------------------------+-----------+\n", &crc);
+    sendStr("+-----------+-----------+-----------+-----------+-----------+\n", &crc);
 
-    sendStr("+--------------------------------------------------------------------+\n", &crc);
-    sendStr("|                                  Sensor                            |\n", &crc);
-    sendStr("+-----------+-----------+--------------------------------+-----------+\n", &crc);
-    sendStr("|     id    | remote_id |             peer_id            |  value    |\n", &crc);
-    sendStr("+-----------+-----------+--------------------------------+-----------+\n", &crc);
+    sendStr("+-----------------------------------------------------------+\n", &crc);
+    sendStr("|                           Sensor                          |\n", &crc);
+    sendStr("+-----------+-----------+-----------+-----------+-----------+\n", &crc);
+    sendStr("|     id    | remote_id | peer_link |  value    |   link    |\n", &crc);
+    sendStr("+-----------+-----------+-----------+-----------+-----------+\n", &crc);
     for (i = 0; i < sl->length; i++) {
-        snprintf(q, sizeof q, "|%11d|%11d|%32s|%11d|\n",
+        snprintf(q, sizeof q, "|%11d|%11d|%11p|%11d|%11p|\n",
                 sl->item[i].id,
                 sl->item[i].remote_id,
-                sl->item[i].source->id,
-                sl->item[i].value
+                sl->item[i].source,
+                sl->item[i].value,
+                &sl->item[i]
                 );
         sendStr(q, &crc);
     }
-    sendStr("+-----------+-----------+--------------------------------+-----------+\n", &crc);
+    sendStr("+-----------+-----------+-----------+-----------+-----------+\n", &crc);
 
     snprintf(q, sizeof q, "Lock key: %.32s\n", lock.key);
     sendStr(q, &crc);
     sendStr("+-----------+\n", &crc);
     sendStr("|  Lock_em  |\n", &crc);
     sendStr("+-----------+\n", &crc);
-    sendStr("|     em    |\n", &crc);
+    sendStr("|  em_link  |\n", &crc);
     sendStr("+-----------+\n", &crc);
     for (i = 0; i < LOCK_KEY_SIZE; i++) {
         if (lock.em_list[i] != NULL) {
@@ -975,7 +841,7 @@ void printAll(ProgList *list, PeerList *pl, EMList *el, SensorList *sl, ValveLis
     sendStr("+-----------------------------------------------------------------------------------+\n", &crc);
     sendStr("|                                     Valve                                         |\n", &crc);
     sendStr("+-----------+-----------+-----------+-----------+-----------+-----------+-----------+\n", &crc);
-    sendStr("|     id    | master_id |   master  | is_master |   count   |     em    |   sensor  |\n", &crc);
+    sendStr("|     id    | master_id |   master  | is_master |   count   |  em_link  |sensor_link|\n", &crc);
     sendStr("+-----------+-----------+-----------+-----------+-----------+-----------+-----------+\n", &crc);
     for (i = 0; i < vl->length; i++) {
         snprintf(q, sizeof q, "|%11d|%11d|%11p|%11d|%11d|%11p|%11p|\n",

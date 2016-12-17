@@ -226,6 +226,12 @@ int config_getPeerList(PGconn *db_conn_settings, PGconn *db_conn_peer, char *id_
             }
             list->item[i].addr_size = sizeof list->item[i].addr;
             list->item[i].fd = fd;
+            if (!initMutex(&list->item[i].mutex)) {
+                PQclear(r);
+                free(s1l.item);
+                fprintf(stderr, "config_getPeerList: initMutex() failed for peer with id=%s\n", list->item[i].id);
+                return 0;
+            }
             PQclear(r);
         }
     }

@@ -259,7 +259,6 @@ void initApp() {
 
 int initData() {
     char q[LINE_SIZE];
-    printf("initData: db pointers:%p %p", *db_connp_data, *db_connp_public);
     snprintf(q, sizeof q, "select peer_id from " APP_NAME_STR ".em_mapping where app_class='%s' union distinct select peer_id from " APP_NAME_STR ".sensor_mapping where app_class='%s'", app_class, app_class);
     if (!config_getPeerList(*db_connp_data, *db_connp_public, q, &peer_list, &udp_fd_tf)) {
         FREE_LIST(&peer_list);
@@ -570,12 +569,6 @@ void loadAllProg(ProgList *list, const ValveList *vlist) {
             free(item);
             continue;
         }
-        if (!initMutex(&item->mutex_all)) {
-            FREE_LIST(&item->tpl);
-            FREE_LIST(&item->cpl);
-            free(item);
-            continue;
-        }
         if (!checkProg(item, list)) {
             FREE_LIST(&item->tpl);
             FREE_LIST(&item->cpl);
@@ -593,6 +586,7 @@ void loadAllProg(ProgList *list, const ValveList *vlist) {
     printProgList(&prog_list);
 }
 
+/*
 int readSensorRain(Sensor *s) {
     if (lockSensor(s)) {
         s->value = 0;
@@ -601,53 +595,74 @@ int readSensorRain(Sensor *s) {
     }
     return 0;
 }
+ */
+
+int readSensorRain(Sensor *s) {
+    if (lockSensor(s)) {
+        if (lockPeer(s->source)) {
+            struct timespec now = getCurrentTime();
+            if (!timeHasPassed(rsens_interval_min, s->last_read_time, now)) {
+                unlockPeer(s->source);
+                unlockSensor(s);
+                return s->last_return;
+            }
+            int di[1];
+            di[0] = s->remote_id;
+            I1List data = {di, 1};
+
+            if (!acp_sendBufArrPackI1List(ACP_CMD_GET_INT, udp_buf_size, &data, s->source)) {
+#ifdef MODE_DEBUG
+                fputs("ERROR: readSensorRain: acp_sendBufArrPackI1List failed\n", stderr);
+#endif
+                s->source->active = 0;
+                s->source->time1 = now;
+                s->last_read_time = now;
+                s->last_return = 0;
+                unlockPeer(s->source);
+                unlockSensor(s);
+                return 0;
+            }
+            //waiting for response...
+            I2 td[1];
+            I2List tl = {td, 0};
+
+            if (!acp_recvI2(&tl, ACP_QUANTIFIER_SPECIFIC, ACP_RESP_REQUEST_SUCCEEDED, udp_buf_size, 1, *(s->source->fd))) {
+#ifdef MODE_DEBUG
+                fputs("ERROR: readSensorRain: acp_recvI2() error\n", stderr);
+#endif
+                s->source->active = 0;
+                s->source->time1 = now;
+                s->last_read_time = now;
+                s->last_return = 0;
+                unlockPeer(s->source);
+                unlockSensor(s);
+                return 0;
+            }
+            if (tl.item[0].p0 != s->remote_id) {
+#ifdef MODE_DEBUG
+                fputs("ERROR: readSensorRain: response: id is not requested one\n", stderr);
+#endif
+                s->source->active = 1;
+                s->source->time1 = now;
+                s->last_read_time = now;
+                s->last_return = 0;
+                unlockPeer(s->source);
+                unlockSensor(s);
+                return 0;
+            }
+            s->source->active = 1;
+            s->source->time1 = now;
+            s->value = tl.item[0].p1;
+            s->last_read_time = now;
+            s->last_return = 1;
+            unlockPeer(s->source);
+            unlockSensor(s);
+            return 1;
+        }
+    }
+}
 
 /*
-int readSensorRain(Sensor *s) {
-    if (s == NULL) {
-        return 0;
-    }
- struct timespec now=getCurrentTime();
- if(!timeHasPassed(rsens_interval_min, s->last_read_time, now)){
-  return s->last_return;
-  }
-  
-  
-    int di[1];
-    di[0] = s->remote_id;
-    I1List data = {di, 1};
-
-    if (!acp_sendBufArrPackI1List(ACP_CMD_GET_INT, udp_buf_size, &data, s->source)) {
-#ifdef MODE_DEBUG
-        fputs("ERROR: sensorRead: acp_sendBufArrPackI1List failed\n", stderr);
-#endif
- s->last_return=0;
-        return 0;
-    }
-    //waiting for response...
-    I2 td[1];
-    I2List tl = {td, 0};
-
-    if (!acp_recvI2(&tl, ACP_QUANTIFIER_SPECIFIC, ACP_RESP_REQUEST_SUCCEEDED, udp_buf_size, 1, *(s->source->fd))) {
-#ifdef MODE_DEBUG
-        fputs("ERROR: sensorRead: acp_recvI2() error\n", stderr);
-#endif
-  s->last_return=0;
-        return 0;
-    }
-    if (tl.item[0].p0 != s->id) {
-#ifdef MODE_DEBUG
-        fputs("ERROR: sensorRead: response: id is not requested one\n", stderr);
-#endif
- s->last_return=0;
-        return 0;
-    }
-    s->value = tl.item[0].p1;
-  s->last_read_time=now;
-  s->last_return=1;
-    return 1;
-}
- */
 int controlEM(EM *em, int output) {
     if (lockEM(em)) {
         em->last_output = (float) output;
@@ -656,29 +671,36 @@ int controlEM(EM *em, int output) {
     }
     return 0;
 }
-
-/*
-int controlEM(EM *em, int output) {
-    if (em == NULL) {
-        return 0;
-    }
-    if (output == em->last_output) {
-        return 0;
-    }
-    I2 di[1];
-    di[0].p0 = em->remote_id;
-    di[0].p1 = output;
-    I2List data = {di, 1};
-    if (!acp_sendBufArrPackI2List(ACP_CMD_SET_INT, udp_buf_size, &data, em->source)) {
-#ifdef MODE_DEBUG
-        fputs("ERROR: controlEM: failed to send request\n", stderr);
-#endif
-        return 0;
-    }
-    em->last_output =  (float) output;
-    return 1;
-}
  */
+
+
+int controlEM(EM *em, int output) {
+    if (lockEM(em)) {
+        if (lockPeer(em->source)) {
+            if (output == em->last_output) {
+                unlockPeer(em->source);
+                unlockEM(em);
+                return 0;
+            }
+            I2 di[1];
+            di[0].p0 = em->remote_id;
+            di[0].p1 = output;
+            I2List data = {di, 1};
+            if (!acp_sendBufArrPackI2List(ACP_CMD_SET_INT, udp_buf_size, &data, em->source)) {
+#ifdef MODE_DEBUG
+                fputs("ERROR: controlEM: failed to send request\n", stderr);
+#endif
+                unlockPeer(em->source);
+                unlockEM(em);
+                return 0;
+            }
+            em->last_output = (float) output;
+            unlockPeer(em->source);
+            unlockEM(em);
+            return 1;
+        }
+    }
+}
 
 void serverRun(int *state, int init_state) {
     char buf_in[udp_buf_size];
@@ -894,7 +916,9 @@ void serverRun(int *state, int init_state) {
                 {
                     for (i = 0; i < valve_list.length; i++) {
                         turnONV(&valve_list.item[i]);
-                        printf("turn on valve: %d\n", valve_list.item[i].id);
+#ifdef MODE_DEBUG
+                        printf("turn on valve with id = %d\n", valve_list.item[i].id);
+#endif 
                     }
                     break;
                 }
@@ -903,7 +927,9 @@ void serverRun(int *state, int init_state) {
                         Valve *p = getValveById(i1l.item[i], &valve_list);
                         if (p != NULL) {
                             turnONV(p);
-                            printf("turn on valve: %d\n", p->id);
+#ifdef MODE_DEBUG
+                            printf("turn on valve with id = %d\n", p->id);
+#endif 
                         }
                     }
                     break;
@@ -915,7 +941,9 @@ void serverRun(int *state, int init_state) {
                 {
                     for (i = 0; i < valve_list.length; i++) {
                         turnOFFV(&valve_list.item[i]);
+#ifdef MODE_DEBUG
                         printf("turn off valve: %d\n", valve_list.item[i].id);
+#endif 
                     }
                     break;
                 }
@@ -924,7 +952,9 @@ void serverRun(int *state, int init_state) {
                         Valve *p = getValveById(i1l.item[i], &valve_list);
                         if (p != NULL) {
                             turnOFFV(p);
+#ifdef MODE_DEBUG
                             printf("turn off valve: %d\n", p->id);
+#endif 
                         }
                     }
                     break;
@@ -1119,14 +1149,14 @@ void progControl(Prog *item) {
             if (result == TARGET_OK) {
                 item->state = CMONWD;
             }
-            
-/*
- * this method is slow but more clever, use it if your loop duration is more than GOOD_TOD_DELAY
- * using it you do not need GTIME
-            if(timeFromTPHasCome(&item->tpl)){
-                item->state = CMONWD;
-            }
-*/
+
+            /*
+             * this method is slow but more clever, use it if your loop duration is more than GOOD_TOD_DELAY
+             * using it you do not need GTIME
+                        if(timeFromTPHasCome(&item->tpl)){
+                            item->state = CMONWD;
+                        }
+             */
             break;
         }
         case WPREV:
@@ -1267,7 +1297,7 @@ void progControl(Prog *item) {
             break;
         case WRAIN:
             readSensorRain(item->valve->sensor_rain);
-            if (item->valve->sensor_rain->value) {
+            if (item->valve->sensor_rain->value == 0) {
                 item->state_rn = SRAIN;
             }
             break;
@@ -1278,17 +1308,17 @@ void progControl(Prog *item) {
             break;
         case WDRY:
             readSensorRain(item->valve->sensor_rain);
-            if (!item->valve->sensor_rain->value) {
+            if (item->valve->sensor_rain->value == 1) {
                 item->state_rn = SDRY;
             }
             break;
         case SDRY:
-            item->blocked_rn = 0;
             if (item->state == WBTIME || item->state == WBINF) {
                 if (item->blocked_rn) {
                     turnONV(item->valve);
                 }
             }
+            item->blocked_rn = 0;
             item->state_rn = WRAIN;
             break;
         default:
@@ -1311,17 +1341,12 @@ void *threadFunction_ctl(void *arg) {
     while (1) {
         size_t i;
         struct timespec t1 = getCurrentTime();
-        // pingPeerList(peer_ping_interval, t1, &peer_list);
+        pingPeerList(peer_ping_interval, t1, &peer_list);
         if (tryLockProgList()) {
             PROG_LIST_LOOP_ST
-            if (tryLockProgA(curr)) {
-                if (tryLockProg(curr)) {
-                    progControl(curr);
-                    unlockProg(curr);
-                }
-                unlockProgA(curr);
-            } else {
-                break;
+            if (tryLockProg(curr)) {
+                progControl(curr);
+                unlockProg(curr);
             }
             PROG_LIST_LOOP_SP
             unlockProgList();
@@ -1475,10 +1500,16 @@ int main(int argc, char** argv) {
     while (1) {
         switch (app_state) {
             case APP_INIT:
+#ifdef MODE_DEBUG
+                puts("MAIN: init");
+#endif
                 initApp();
                 app_state = APP_INIT_DATA;
                 break;
             case APP_INIT_DATA:
+#ifdef MODE_DEBUG
+                puts("MAIN: init data");
+#endif
                 if (initData()) {
                     lockOpen(&lock);
                     data_initialized = 1;
@@ -1487,20 +1518,32 @@ int main(int argc, char** argv) {
                 }
                 app_state = APP_RUN;
                 break;
-            case APP_RUN:puts("main: run");
+            case APP_RUN:
+#ifdef MODE_DEBUG
+                puts("MAIN: run");
+#endif
                 serverRun(&app_state, data_initialized);
                 break;
             case APP_STOP:
+#ifdef MODE_DEBUG
+                puts("MAIN: stop");
+#endif
                 freeData();
                 data_initialized = 0;
                 app_state = APP_RUN;
                 break;
             case APP_RESET:
+#ifdef MODE_DEBUG
+                puts("MAIN: reset");
+#endif
                 freeApp();
                 data_initialized = 0;
                 app_state = APP_INIT;
                 break;
             case APP_EXIT:
+#ifdef MODE_DEBUG
+                puts("MAIN: exit");
+#endif
                 exit_nicely();
                 break;
             default:

@@ -168,7 +168,6 @@ struct prog_st {
     struct timespec cbusy_time;
 
     Mutex mutex;
-    Mutex mutex_all;
 
     struct prog_st *next;
 };
